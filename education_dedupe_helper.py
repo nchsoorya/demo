@@ -40,11 +40,6 @@ def clean_education_duplicates_semantically(edu_history: list) -> list:
                 return 1.0
             return SequenceMatcher(None, left, right).ratio()
 
-        print(f"\n🔬 [PAIRWISE EVALUATION LOG] Running All Combinations:")
-        print(
-            f"{'Record A String Signature':<70} | {'Record B String Signature':<70} | {'Comb':<6} | {'Sch':<6} | {'Deg':<6} | {'Status'}")
-        print("-" * 235)
-
         for i in range(n):
             if i in indices_to_drop:
                 continue
@@ -52,55 +47,33 @@ def clean_education_duplicates_semantically(edu_history: list) -> list:
                 if j in indices_to_drop:
                     continue
 
-                # --- Real Vector Slice Extractions ---
-                similarity_combined = _similarity(combined_signatures[i], combined_signatures[j])
                 similarity_school = _similarity(school_names[i], school_names[j])
                 similarity_degree = _similarity(degree_names[i], degree_names[j])
 
                 school_match_exact = similarity_school >= 0.98
                 degree_match_exact = similarity_degree >= 0.98
 
-                # Double-Cross Matching Gates
                 is_duplicate = (
-                        # similarity_combined >= SIMILARITY_THRESHOLD or
                         (similarity_school >= SIMILARITY_THRESHOLD and similarity_degree >= SIMILARITY_THRESHOLD) or
                         (school_match_exact and similarity_degree >= 0.6) or
                         (degree_match_exact and similarity_school >= 0.6)
                 )
 
-                status_text = "KEEP"
-
                 if is_duplicate:
                     if len(degree_names[j]) > len(degree_names[i]):
                         indices_to_drop.add(i)
-                        status_text = "DROP_A"
-
-                        # Print the detailed single line before breaking the inner loop step
-                        print(
-                            f"{combined_signatures[i]:<70} | {combined_signatures[j]:<70} | {similarity_combined:.4f} | {similarity_school:.4f} | {similarity_degree:.4f} | {status_text}")
+                        print(f"[EduDedupe] DROP A: {combined_signatures[i]!r} in favour of {combined_signatures[j]!r}")
                         break
                     else:
                         indices_to_drop.add(j)
-                        status_text = "DROP_B"
+                        print(f"[EduDedupe] DROP B: {combined_signatures[j]!r} in favour of {combined_signatures[i]!r}")
 
-                # Print clean inline metric summaries for all evaluations
-                print(
-                    f"{combined_signatures[i]:<70} | {combined_signatures[j]:<70} | {similarity_combined:.4f} | {similarity_school:.4f} | {similarity_degree:.4f} | {status_text}")
+        if indices_to_drop:
+            dropped = [edu_history[idx] for idx in indices_to_drop]
+            print(f"[EduDedupe] Dropped {len(dropped)} duplicate(s): {dropped}")
 
-        dropped_records = [record for idx, record in enumerate(edu_history) if idx in indices_to_drop]
-        print("\n🗑️ Dropped education items:")
-        for dropped in dropped_records:
-            print(dropped)
-
-        # Reconstruct final data
-        cleaned_edu = [record for idx, record in enumerate(edu_history) if idx not in indices_to_drop]
-
-        # print("\n\n\n\n\n\n\n\n\n\n\n")
-        # print(cleaned_edu)
-        # print("\n\n\n\n\n\n\n\n\n\n\n")
-
-        return cleaned_edu
+        return [record for idx, record in enumerate(edu_history) if idx not in indices_to_drop]
 
     except Exception as local_err:
-        print(f"⚠️ Vector pairing exception caught: {local_err}")
+        print(f"⚠️ EduDedupe exception: {local_err}")
         return edu_history

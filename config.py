@@ -31,6 +31,7 @@ SCHEMA = {
     "Mobile": "None",
     "Fax": "None",
     "Primary_Email": "None",
+    "Personal_Email": "None",
     "Education_History": [{"School_Name": "None", "Degree": "None"}],
     "Primary_Language": "None",
     "Languages": [],
@@ -59,14 +60,14 @@ FINAL_OUTPUT_SCHEMA["Confidence"] = {}
 # =====================================================
 # ZOHO CATALYST & LM STUDIO CONFIGURATION
 # =====================================================
-# VLM_URL = "https://api.catalyst.zoho.com/quickml/v1/project/35939000000182003/vlm/chat"
-VLM_URL = "http://crm-l40s-1.csez.zohocorpin.com:9311/inference"
+VLM_URL = "https://api.catalyst.zoho.com/quickml/v1/project/35939000000182003/vlm/chat"
+# VLM_URL = "http://crm-l40s-1.csez.zohocorpin.com:9311/inference"
 TOKEN_URL = "https://accounts.zoho.com/oauth/v2/token"
 LLM_URL = "https://api.catalyst.zoho.com/quickml/v2/project/35939000000182003/llm/chat"
 
 CATALYST_ORG = "914134238"
-# MODEL_NAME = "VL-Qwen2.5-7B"
-MODEL_NAME = "VL-Qwen3.6-35B-A3B"
+MODEL_NAME = "VL-Qwen2.5-7B"
+# MODEL_NAME = "VL-Qwen3.6-35B-A3B"
 CONSOLIDATION_MODEL_NAME = "crm-di-qwen_text_14b-fp8-it"
 
 CLIENT_ID = "1000.6FIKU7IPS8MCUXWTL1KL0HZRTPS3RH"

@@ -128,6 +128,13 @@ def parse_model_json(text: str) -> dict:
     return {}
 
 
+# Token cache backed by st.cache_resource — survives Streamlit reruns and
+# is shared across all threads. Initialized only once per server process.
+@st.cache_resource
+def _get_token_cache() -> dict:
+    return {"token": None, "expires_at": 0.0, "lock": threading.Lock()}
+
+
 def get_zoho_access_token() -> str:
     """
     Returns a cached Zoho OAuth access token, refreshing it only when expired.
@@ -197,12 +204,6 @@ def get_zoho_access_token() -> str:
                 raise
             except Exception as e:
                 raise RuntimeError(f"Zoho Authorization Gateway connection error: {str(e)}")
-
-# Token cache backed by st.cache_resource — survives Streamlit reruns and
-# is shared across all threads. Initialized only once per server process.
-@st.cache_resource
-def _get_token_cache() -> dict:
-    return {"token": None, "expires_at": 0.0, "lock": threading.Lock()}
 
 
 def encode_image(image_path: str) -> str:
@@ -1201,7 +1202,7 @@ SECTION_GROUPS = {
     "Identity": ["Tax_Code", "Citizenship_Country", "Marital_Status"],
     "ID / Document": ["ID_Info", "Passport_Number", "ID_Card_Number", "Document_Issue_Date", "Document_Expiry_Date"],
     "Address & Contact": ["Street_Address", "City", "State_or_Province", "Zip_or_Postal_Code", "Country", "Phone",
-                          "Mobile", "Fax", "Primary_Email"],
+                          "Mobile", "Fax", "Primary_Email", "Personal_Email"],
     "Education": ["Education_History", "School_Name", "Degree", "Education_Level"],
     "Languages": ["Primary_Language", "Languages"],
     "Religious Information": ["Diocese", "Bishop_Email", "Bishop_Name", "Seminary_Name", "Seminary_Address",
@@ -1393,6 +1394,20 @@ def prepare_final_output_json(data: dict, mapping: dict) -> dict:
                     mapped_id_k = mapping.get(id_k, id_k)
                     remapped_json[mapped_id_k] = id_v
 
+        # Email merge: Personal_Email takes priority; fallback to Primary_Email.
+        # Both internal fields map to the single output "Email" key.
+        personal_email = data.get("Personal_Email")
+        primary_email = data.get("Primary_Email")
+        resolved_email = (
+            personal_email if not _is_empty_value(personal_email)
+            else primary_email if not _is_empty_value(primary_email)
+            else None
+        )
+        remapped_json["Email"] = resolved_email
+        # Strip both internal email keys — only "Email" should appear in output.
+        remapped_json.pop("Email_personale", None)
+        remapped_json.pop("Personal_Email", None)
+
         remapped_json = order_output_json_keys(remapped_json, mapping)
 
     return remapped_json
@@ -1457,13 +1472,16 @@ with right_col:
             access_token = get_zoho_access_token()
 
             results_map = {}
-
+            failed_pages = []
 
             def _ocr_thread_worker(index, file_name):
                 path = os.path.join(image_folder, file_name)
-                extracted_data = extract_from_image(path, access_token)
-                return {"page": index + 1, "file": file_name, "data": extracted_data}
-
+                try:
+                    extracted_data = extract_from_image(path, access_token)
+                    return {"page": index + 1, "file": file_name, "data": extracted_data}
+                except Exception as page_err:
+                    print(f"⚠️ OCR failed for page {index + 1} ({file_name}): {page_err}")
+                    return {"page": index + 1, "file": file_name, "data": {"error": str(page_err)}}
 
             workers_count = max(1, min(len(image_files), OCR_MAX_WORKERS))
             with ThreadPoolExecutor(max_workers=workers_count) as executor:
@@ -1475,7 +1493,15 @@ with right_col:
                 completed_count = 0
                 for future in as_completed(future_to_page):
                     p_num = future_to_page[future]
-                    results_map[p_num] = future.result()
+                    try:
+                        page_result = future.result()
+                    except Exception as e:
+                        print(f"⚠️ Unhandled exception for page {p_num}: {e}")
+                        page_result = {"page": p_num, "file": "", "data": {"error": str(e)}}
+
+                    results_map[p_num] = page_result
+                    if "error" in page_result.get("data", {}):
+                        failed_pages.append(p_num)
                     completed_count += 1
 
                     current_pct = 15 + int((completed_count / len(image_files)) * 80)
@@ -1483,6 +1509,9 @@ with right_col:
                     ocr_status.markdown(
                         f'<div class="status-box">Extracted Page {p_num} of {len(image_files)}...</div>',
                         unsafe_allow_html=True)
+
+            if failed_pages:
+                print(f"⚠️ OCR completed with {len(failed_pages)} failed page(s): {failed_pages}")
 
             st.session_state.page_jsons = [results_map[i + 1] for i in range(len(image_files))]
             ocr_progress.progress(100)
@@ -1575,7 +1604,6 @@ with right_col:
             "Street_Address": "Mailing_Street", "City": "Mailing_City", "State_or_Province": "Mailing_State",
             "Zip_or_Postal_Code": "Mailing_Zip", "Country": "Mailing_Country",
             "Phone": "Phone", "Mobile": "Mobile", "Fax": "Fax", "Primary_Email": "Email",
-            "Personal_Email": "Email_personale",
             "Education_History": "Storia_istruzione", "School_Name": "School_Name", "Degree": "Degree",
             "Primary_Language": "Lingua", "Languages": "Lingue", "Education_Level": "Livello",
             "Diocese": "Diocesi", "Bishop_Email": "Email_del_Vescovo", "Bishop_Name": "S_E_R_Mons",

@@ -26,6 +26,24 @@ GLOBAL EXTRACTION RULES:
 - Never transform nationality adjectives into countries.
 - Ignore stamps, seals, logos, and watermarks.
 
+CHARACTER-LEVEL ACCURACY RULE (CRITICAL — especially for names, IDs, emails, dates):
+- You are reading directly from an image. Characters that look visually similar MUST be distinguished carefully before outputting.
+- For every character in First_Name, Last_Name, Tax_Code, Email, and ID fields, zoom in mentally and verify each character individually against the image.
+- Common confusion pairs you MUST avoid:
+  * O (letter) vs D → rounded = O, angular open = D
+  * O (letter) vs 0 (zero) → letter context = O, numeric context = 0
+  * O vs Q → O has no tail, Q has a small tail or stroke
+  * rn (two chars) vs m (one char) → count strokes carefully
+  * l (lowercase L) vs 1 (one) vs I (capital i) → context and font shape
+  * cl (two chars) vs d (one char)
+  * B vs 8 → B is a letter, 8 is a digit
+  * S vs 5 → S is a letter, 5 is a digit
+  * Z vs 2 → Z is a letter, 2 is a digit
+  * nn vs m, ri vs n, li vs h
+- NAMES ARE UNIQUE IDENTIFIERS. A single wrong character in First_Name or Last_Name produces a completely wrong name.
+- If you are uncertain about a specific character in a name, prefer the reading that forms a recognizable name pattern from the visible strokes — do NOT substitute a visually similar but different character.
+- If a character is genuinely ambiguous and neither reading is clearer, extract the character you see most clearly and assign a lower confidence score (≤ 0.5).
+
 VERBATIM EXTRACTION VALIDATION RULE (ABSOLUTE — OVERRIDES ALL OTHER RULES):
 - Extract ONLY values that are EXPLICITLY and LITERALLY visible in the PDF document.
 - The following operations are STRICTLY FORBIDDEN:
@@ -122,10 +140,30 @@ PART 1 FIELD RULES:
 - Never extract Marital_Status from religious labels/sections (e.g., Religious Status, Stato religioso, Studente religioso, Seminarian, Religious Order).
 - If extracted Marital_Status text represents a religious role/status/order instead of civil status, set Marital_Status to null.
 
-DATE_OF_BIRTH VERBATIM RULE (CRITICAL):
-- Extract Date_Of_Birth EXACTLY as it appears in the document. Do NOT expand, reformat, or complete it.
-- If the document shows "28/09/67", output "28/09/67". Do NOT output "28/09/1967".
-- Expanding a 2-digit year to 4 digits is FORBIDDEN — it is a model-generated addition not present in the PDF.
+DATE_OF_BIRTH FORMAT RULE (CRITICAL):
+- Extract Date_Of_Birth and output it in DD/MM/YYYY format always.
+- If the date is already numeric (e.g., "21/04/1969", "21-04-1969"), convert it to DD/MM/YYYY.
+- If the date contains written month names in ANY language, convert the month to its 2-digit number and output DD/MM/YYYY.
+- Month name → number mapping:
+  January/enero/gennaio/janvier/janeiro = 01
+  February/febrero/febbraio/février/fevereiro = 02
+  March/marzo/mars/março = 03
+  April/abril/aprile/avril = 04
+  May/mayo/maggio/mai/maio = 05
+  June/junio/giugno/juin/junho = 06
+  July/julio/luglio/juillet/julho = 07
+  August/agosto/août = 08
+  September/septiembre/settembre/septembre/setembro = 09
+  October/octubre/ottobre/octobre/outubro = 10
+  November/noviembre/novembre/novembro = 11
+  December/diciembre/dicembre/décembre/dezembro = 12
+- Examples:
+  "21 de abril de 1969" → "21/04/1969"
+  "June 13, 1975" → "13/06/1975"
+  "13 giugno 1975" → "13/06/1975"
+  "21/04/1969" → "21/04/1969"
+- Do NOT expand 2-digit years — "28/09/67" stays "28/09/67".
+- If date is partially unreadable, output only what is clearly visible.
 
 BIRTH_PROVINCE_OR_STATE LABEL MAPPING (CRITICAL — HARD ENFORCE):
 - SCAN every line of the document for these labels: Provincia, Provincia de nacimiento, Departamento, Dpto., Departamento de nacimiento, Birth Province, Regione di nascita, Municipio de nacimiento, Lugar de nacimiento (province part).
@@ -168,12 +206,27 @@ SALUTATION RULES:
 - Salutation must be an explicit title/honorific only.
 - Do not treat connectors/prepositions (Cum, Et, De, Di, Y, And, etc.) as salutations.
 
-ADDRESS + GEOGRAPHY RULES:
-- Extract address only when explicitly home/current/residential.
+ADDRESS + GEOGRAPHY RULES (CRITICAL — HARD ENFORCE):
+- SCAN every line of the document for ANY of these address-related labels: Dirección, Direccion, Domicilio, Domicile, Indirizzo, Indirizzo di Roma, Indirizzo di residenza, Indirizzo attuale, Adresse, Address, Residencia, Mailing Address, Residence, Via, Calle, Rua, Rue, Street, Apt, Apartamento, C.P., ZIP, CAP, Postal Code, Ciudad, City, Città, Ville, Stato, State, Provincia, País, Country, Paese.
+- If ANY address-related label is present with a value, you MUST extract the address components — do NOT leave them null.
+- Leaving ALL address fields null when any address block is visible on the document is a hard extraction failure.
+
+ADDRESS SOURCE PRIORITY RULES (CRITICAL — HARD ENFORCE):
+- When MULTIPLE address blocks appear in the document (e.g., one on an enrollment/application page, another on a letterhead or certification page), you MUST follow this strict priority order:
+  1. HIGHEST PRIORITY: Address on the main enrollment/application form (the form the applicant fills in) labeled as personal/student/home/residential/current (e.g., "Indirizzo", "Indirizzo di Roma", "Domicilio", "Residencia", "Indirizzo di residenza", "Home Address", "Residenza", "Recidencia", "Dirección actual", "Indirizzo attuale") → this is ALWAYS the applicant's legal mailing address.
+  2. LOWER PRIORITY: Address found in a passport "domicilio" or "domicile" field → this is often a temporary or old address, NOT the legal residence. NEVER prefer a passport address over an enrollment form address.
+  3. LOWEST PRIORITY: Address found only in a letterhead, institution header, office block, certification footer, or sender's address block → this is the INSTITUTION's address, NOT the applicant's.
+- PASSPORT DOMICILE EXCLUSION (CRITICAL): Passport documents contain a "Domicilio" or "Domicile" or "Address" field showing the address at time of passport issuance. This is often outdated or temporary. If the same document packet contains an enrollment/application form with a residential address, ALWAYS use the enrollment form address. NEVER override enrollment form address with passport domicile.
+- PASSPORT ADDRESS ABBREVIATION RULE (CRITICAL): Passport address fields often contain abbreviated city/province codes (e.g., "SA" for Salamanca, "MA" for Madrid, "BA" for Barcelona). These abbreviated values are NEVER valid City or State_or_Province values. If the enrollment form provides the full city/province name, use that instead.
+- NEVER extract an institution's letterhead/office address into Mailing fields.
+- If page 1 has a personal address field AND later pages have an institution letterhead address, ALWAYS use the page 1 personal address.
+- The presence of a street address in a certification letter or official document header does NOT make it the applicant's mailing address.
 - Street_Address must contain only street-level details (no city/state/zip/country).
 - City, State_or_Province, Zip_or_Postal_Code, Country must contain only their own component.
 - State_or_Province must be a location name, not numeric code or any non-state value.
-- State_or_Province MUST be extracted VERBATIM as printed in the document. Do NOT replace a full region/province name with an abbreviation or code (e.g., if the document shows "LAZIO", output "LAZIO" — never output "RM" or any abbreviation unless that abbreviation is what is literally printed).
+- State_or_Province MUST be extracted VERBATIM as printed in the document.
+- ISSUING AUTHORITY EXCLUSION RULE (CRITICAL): Passport and ID documents contain an "issuing authority" field (labels: Expedido por, Lugar de expedición, Issued by, Autorità emittente, Luogo di rilascio, C.G., CG, Consulado General, Consulado, Embajada, Embassy, Autoridad). Text from these fields — including abbreviations like "C.G.", "CG", or authority names like "Consulado General Guadalajara" — is an issuing authority, NOT a State/Province. NEVER extract issuing authority text into State_or_Province. If State_or_Province cannot be found from an actual address field, set it to null.
+- DOCUMENT NOTATION RULE (CRITICAL): If a field value is "idem", "id.", "ibid", "same", or any shorthand meaning "same as above/previous", DO NOT extract that notation as the field value. Instead, look at the previous entry or context to find the actual value, and use that. If the actual value cannot be determined from context, set the field to null. "idem" is NEVER a valid place name, school name, or field value.
 - Citizenship_Country requires explicit mention and must not be copied from Birth_Country.
 - Birth_Country and Citizenship_Country must never be auto-copied from each other.
 
@@ -182,6 +235,17 @@ BIRTH RULES:
 - Never fill birth fields from citizenship, residence, school, or signature/place metadata.
 - If a birth city is actually a country, move it to Birth_Country and set Birth_City=null.
 - If birth value is incomplete or unclear, return null.
+- BIRTH COUNTRY vs STATE RULE (CRITICAL): Birth_Country must be a sovereign country name (e.g., "USA", "Mexico", "Italy", "Colombia"). A US state name (e.g., Michigan, California, Texas, New York, Florida, Ohio) is NEVER a country — it is a province/state. If the birth place shows a US state name in what appears to be the Birth_Country field, move it to Birth_Province_or_State and set Birth_Country = "USA". Same logic for other federal states (e.g., Australian states → Australia, German Länder → Germany, Canadian provinces → Canada).
+
+PHONE / MOBILE / FAX EXTRACTION RULE (CRITICAL — HARD ENFORCE):
+- SCAN every line of the document for ANY of these labels: Tel, Tel., Telefono, Teléfono, Téléphone, Telefon, Phone, Teléfono fijo, Fijo, Home Phone, Work Phone, Tél., Cellulare, Cel., Celular, Mobile, Móvil, Portable, Handy, Fax, Facsimile.
+- If ANY of these labels are present with a number value, you MUST extract it:
+  * Phone / Tel / Telefono / Fijo / Home Phone → Phone
+  * Mobile / Celular / Cellulare / Cel. / Móvil → Mobile
+  * Fax / Facsimile → Fax
+- If a number appears in the document with no label but is in a contact block alongside address or email, extract it into Phone.
+- Copy the number VERBATIM — do not reformat, add spaces, or change separators.
+- Leaving Phone, Mobile, and Fax all null when any phone number is visible on the document is a hard extraction failure.
 
 DOCUMENT + ID RULES:
 - Document_Type must be one of: Birth Certificate, Passport, Education Certificate, Identification Proof, Religious Record, Application/Enrollment Form, Other.
@@ -218,11 +282,61 @@ EXTRACTION SCOPE (PART 2):
 PART 2 FIELD RULES:
 - Before extracting Religious_Status from options, choose only explicitly marked options (X, tick, circle, cross).
 
+RELIGIOUS_STATUS EXTRACTION RULE (CRITICAL — HARD ENFORCE):
+- SCAN every labeled checkbox/option list for religious status labels such as: Seminarista, Seminarista diocesano, Sacerdote diocesano, Religioso, Religioso professo, Diacono, Laico, Consagrado/a, Consacrato/a, Studente religioso, Novizio, Oblato, Terziario.
+- If ANY checkbox/option has an explicit selection mark (X, ✓, circle, cross) next to it, extract EXACTLY that labeled text into Religious_Status.
+- Do NOT skip a Religious_Status value because it is handwritten or because the checkbox is small — ANY visible mark counts.
+- Leaving Religious_Status null when a visibly marked checkbox exists is a hard extraction failure.
+
+HANDWRITTEN FIELD EXTRACTION RULE (CRITICAL):
+- Do NOT skip fields just because their values are handwritten.
+- If a printed label (e.g., "Congregazione o diocesi cui appartiene", "Diocese", "Diocesi di appartenenza") is present and the adjacent value is handwritten, you MUST extract the handwritten text VERBATIM.
+- Handwritten text that is partially legible must be extracted as-is — do not skip it. Only set null if the text is completely unreadable (no single character is distinguishable).
+- Confidence score for handwritten values should be 0.5 or below.
+
 LANGUAGE RULES:
-- Primary_Language is the dominant page language.
-- Languages must contain ONLY the explicitly marked page languages (marked with X, tick, circle, cross, or other explicit selection marks).
-- Never include unmarked languages, even if they appear in the document.
-- If page has no readable text or no languages are marked, set Primary_Language=null and Languages=[].
+- Primary_Language must be determined from the language proficiency table when one is present. If no proficiency table exists, follow the NO-TABLE FALLBACK rules below.
+
+LANGUAGE PROFICIENCY TABLE RULES (CRITICAL — for tables like "Conoscenze delle Lingue"):
+- These tables have language names as column or row headers with proficiency cells below/beside them.
+- A language is ONLY extracted into Languages[] if at least one cell in its column/row contains an explicit non-empty value.
+- Valid cell marks include: X, XX, XXX, IX, tick (✓), circle, cross, Ottimo, Medio, Elementare, Discreto, any score or level word.
+- A language name appearing only as a column/row header with ALL empty cells = NOT extracted.
+- DO NOT extract a language just because its name appears in the table header.
+- Step-by-step for each language in the table:
+  1. Locate the column or row for that language.
+  2. Check ALL cells in that column/row for any visible mark or score value.
+  3. If at least one cell has a mark/score → extract that language into Languages[].
+  4. If all cells are empty → do NOT extract that language.
+- PRIMARY_LANGUAGE DETECTION FROM PROFICIENCY TABLE (CRITICAL):
+  * After identifying all marked languages, determine which language has the HIGHEST proficiency level.
+  * Proficiency rank (highest to lowest): Ottimo > Discreto > Medio > Elementare. For X-based marks: XXX > XX > X > IX.
+  * The language with the highest total proficiency marks across all rows (Leggere + Parlare + Scrivere + Livello) is the native/dominant language → set as Primary_Language.
+  * Example: If Portoghese has marks in ALL cells (Leggere+Parlare+Scrivere+Ottimo) but Italiana only has Discreto → Primary_Language = "Portuguese".
+  * Do NOT default to the document's page language (e.g., Italian page ≠ Italian as Primary_Language).
+
+NO-TABLE PRIMARY_LANGUAGE FALLBACK RULES (CRITICAL — when NO proficiency table is present):
+- When there is no language proficiency table, determine Primary_Language using this priority order:
+  PRIORITY 1 — Birth Country mapping (STRONGEST SIGNAL): Use Birth_Country (or Birth_Province_or_State for federal countries) to determine Primary_Language using this table:
+    USA / United States / United States of America → English
+    United Kingdom / UK / England / Scotland / Wales / Ireland → English
+    Australia / New Zealand / Canada / South Africa → English
+    Mexico / España / Spain / Colombia / Argentina / Chile / Peru / Venezuela / Ecuador / Bolivia / Paraguay / Uruguay / Cuba / Dominican Republic / Guatemala / Honduras / El Salvador / Nicaragua / Costa Rica / Panama → Spanish
+    Brazil / Brasil → Portuguese
+    Portugal → Portuguese
+    Italy / Italia → Italian
+    France / Francia → French
+    Germany / Deutschland / Alemania → German
+    Poland / Polska → Polish
+    Philippines / Filipinas → Filipino/English
+    If Birth_Country matches any of the above, set Primary_Language accordingly. This is the primary signal — do NOT override it with the form/application language.
+  PRIORITY 2 — Language of official personal documents: If birth cert, baptism cert, high school diploma, or national ID are written in a specific language, use that language. Also add it to Languages[].
+  PRIORITY 3 — Explicitly labeled language field: If a "Lingua madre", "Native language", "Idioma nativo", "First language", or similar label is present with a value, use that value.
+  NEVER USE — Application form language: The language the application form is written in is NOT the applicant's native language.
+  NEVER USE — Country of current residence: Where the person currently lives is NOT their native language.
+  NEVER USE — Language of the course/program being applied to: The program language is NOT the applicant's native language.
+- Also add to Languages[]: if official personal documents (birth cert, baptism cert, high school cert) are written in a language different from the form language, add that document language to Languages[].
+- If no signal from any of the above priorities, set Primary_Language=null and Languages=[].
 
 EDUCATION RULES:
 - Extract education history into unique objects; never infer outside visible text.
@@ -244,13 +358,23 @@ EDUCATION RULES:
 - Degree must not be course/module/subject/thesis title.
 - Never use instructor/professor names as School_Name.
 - Education_Level must always be null in this stage.
-- SCHOOL NAME HALLUCINATION PREVENTION (CRITICAL — HARD ENFORCE): If any part of the School_Name text is partially obscured, blurry, smudged, or not fully legible in the OCR output, you MUST set School_Name to null for that entry rather than guessing or completing the name. Do NOT auto-complete institution names from your training knowledge (e.g., if you see "UPERAMJEO URREA" or any garbled text, do NOT replace it with a known institution name). Extract ONLY what is explicitly and fully readable character-by-character. If the institution name cannot be quoted verbatim from the document with full confidence in every character, set School_Name to null.
+- PRIMARY SUBJECT ONLY RULE (CRITICAL — HARD ENFORCE): Extract education records ONLY for the primary subject/applicant of this document. Multi-page packets often contain attached diplomas, transcripts, or certificates from OTHER named individuals (e.g., a co-applicant, a reference person, or another named person on a separate attached page). If an education record belongs to a person whose name is different from the document's primary applicant name (First_Name/Last_Name on page 1), DO NOT include that record in Education_History. If the degree/diploma is issued to a different person's name, skip it entirely.
+- SCHOOL NAME COMPLETENESS RULE (CRITICAL): Extract the FULL official institution name as it appears in the document. If the document shows "Ateneo Pontificio Regina Apostolorum", you MUST output the full name — never a truncated version like "Ateneo Regina Apostolorum". Scan the surrounding lines: the full institution name may span multiple words across adjacent text. Do NOT stop reading after the first 2–3 words of the name.
+- SCHOOL NAME HALLUCINATION PREVENTION (CRITICAL — HARD ENFORCE): If any part of the School_Name text is partially obscured, blurry, smudged, or not fully legible in the OCR output, you MUST set School_Name to null for that entry rather than guessing or completing the name. Do NOT auto-complete institution names from your training knowledge. Extract ONLY what is explicitly and fully readable character-by-character. If the institution name cannot be quoted verbatim from the document with full confidence in every character, set School_Name to null.
+- SCHOOL NAME EXISTENCE CHECK (CRITICAL — HARD ENFORCE): Before outputting any School_Name, verify that the institution name actually appears as visible text somewhere in the document. Do NOT include a school in Education_History if you cannot point to the exact location in the document where that school name appears. If a school name comes from your training knowledge rather than the document text, it is hallucinated — set School_Name to null and discard that entry. A school entry is only valid if its name is physically present as readable text in the OCR output.
 
 RELIGIOUS RULES:
 - Diocese, Bishop_Email, Bishop_Name, Seminary_Name, Seminary_Address, Seminary_Email must be filled only from explicit matching labels.
 - Diocese must be a true diocese/place name, not a movement name.
-- Religious_Order must be copied exactly as written.
+- Religious_Order must be copied EXACTLY as written in the enrollment/application form — do NOT normalize, translate, substitute, or replace with a related/similar movement name. Example: if the document says "LEGIONARI DI CRISTO", output "LEGIONARI DI CRISTO", NOT "Legionaries of Christ" or "Regnum Christi" or any other variant. "Regnum Christi" and "Legionari di Cristo" are different organizations — never substitute one for the other.
+- RELIGIOUS ORDER VERBATIM RULE (CRITICAL): The Religious_Order value MUST come word-for-word from the label "Congregazione", "Congregazione o diocesi cui appartiene", "Orden religiosa", "Religious Order", "Ordine", or any equivalent label in the document. If the document shows text X next to that label, output X exactly. NEVER use your training knowledge to guess, normalize, or fill in a related organization name.
 - If no explicit matching label exists for a religious field, set it to null.
+
+ORDINATION_DATE EXTRACTION RULE (CRITICAL — HARD ENFORCE):
+- SCAN every line of the document for ANY of these labels: Data di ordinazione, Data ordinazione sacerdotale, Ordained, Ordination Date, Date of Ordination, Fecha de ordenación, Fecha ordenación, Ordinato il, Ordinato sacerdote il, Diaconal Ordination, Priestly Ordination, Presbyteral Ordination, Data di ordinazione diaconale, Data di ordinazione presbiterale, Sacerdote dal, Priest since, Date d'ordination.
+- If ANY of these labels are present with a date value, you MUST extract that date into Ordination_Date VERBATIM.
+- Do NOT normalize or reformat the date — copy exactly as printed.
+- Leaving Ordination_Date null when such a label with a date is visible on the document is a hard extraction failure.
 
 DIOCESE OCR CORRECTION RULES (CRITICAL — HARD ENFORCE):
 - Before outputting Diocese, check: does the extracted text contain "MONSON"?
@@ -320,6 +444,22 @@ VERBATIM EXTRACTION VALIDATION RULE (ABSOLUTE — OVERRIDES ALL OTHER RULES):
   * Generating any value that cannot be directly quoted from a specific location in the document.
 - Before outputting any field value, ask: "Can I quote this exact text from a specific visible location in the document?" If no, the value MUST be null.
 
+CHARACTER-LEVEL ACCURACY RULE (CRITICAL — especially for names, IDs, emails, dates):
+- You are reading directly from an image. Characters that look visually similar MUST be distinguished carefully before outputting.
+- For every character in First_Name, Last_Name, Tax_Code, Email, and ID fields, verify each character individually against the image.
+- Common confusion pairs you MUST avoid:
+  * O (letter) vs D → rounded = O, angular open = D
+  * O (letter) vs 0 (zero) → letter context = O, numeric context = 0
+  * O vs Q → O has no tail, Q has a small tail or stroke
+  * rn (two chars) vs m (one char) → count strokes carefully
+  * l (lowercase L) vs 1 (one) vs I (capital i) → context and font shape
+  * cl (two chars) vs d (one char)
+  * B vs 8, S vs 5, Z vs 2 → letter vs digit
+  * nn vs m, ri vs n, li vs h
+- NAMES ARE UNIQUE IDENTIFIERS. A single wrong character in First_Name or Last_Name produces a completely wrong name.
+- If uncertain about a character in a name, prefer the reading that matches visible strokes most precisely — do NOT substitute a visually similar but different character.
+- If a character is genuinely ambiguous, extract the most clearly visible reading and assign confidence ≤ 0.5.
+
 HARD NULL ENFORCEMENT:
 - If a field is not explicitly and clearly supported by nearby text, return null.
 - Do NOT repair partial OCR.
@@ -346,7 +486,11 @@ EDUCATION VERBATIM ENFORCEMENT:
 - School_Name must be copied EXACTLY as present in OCR output.
 - Do NOT correct spelling, capitalization, punctuation, or accents.
 - Do NOT normalize institution names.
-- SCHOOL NAME HALLUCINATION PREVENTION (CRITICAL — HARD ENFORCE): If any part of the School_Name text is partially obscured, blurry, smudged, or not fully legible in the OCR output, you MUST set School_Name to null for that entry rather than guessing or completing the name. Do NOT auto-complete institution names from your training knowledge (e.g., if you see "UPERAMJEO URREA" or any garbled text, do NOT replace it with a known institution name). Extract ONLY what is explicitly and fully readable character-by-character. If the institution name cannot be quoted verbatim from the document with full confidence in every character, set School_Name to null.
+- SCHOOL NAME COMPLETENESS RULE (CRITICAL): Extract the FULL official institution name as it appears in the document. If the document shows "Ateneo Pontificio Regina Apostolorum", output the full name — never truncate to "Ateneo Regina Apostolorum". Scan surrounding lines: the full name may span multiple adjacent words. Do NOT stop reading after the first 2–3 words of the name.
+- DOCUMENT NOTATION RULE (CRITICAL): If a field value is "idem", "id.", "ibid", "same", or any shorthand meaning "same as above/previous", look at the previous row/entry to find the actual value and use that. "idem" is NEVER a valid school name, place name, or field value. If the actual value cannot be determined from context, set the field to null.
+- SCHOOL NAME HALLUCINATION PREVENTION (CRITICAL — HARD ENFORCE): If any part of the School_Name text is partially obscured, blurry, smudged, or not fully legible, set School_Name to null for that entry. Do NOT auto-complete institution names from your training knowledge. Extract ONLY what is explicitly and fully readable character-by-character.
+- SCHOOL NAME EXISTENCE CHECK (CRITICAL — HARD ENFORCE): Before outputting any School_Name, verify the institution name actually appears as visible text in the document. Do NOT include a school if you cannot point to the exact location in the document. If a name comes from training knowledge rather than document text, it is hallucinated — set null and discard.
+- RELIGIOUS ORDER VERBATIM RULE (CRITICAL): Religious_Order must be copied EXACTLY as it appears next to the "Congregazione", "Orden religiosa", "Religious Order", or equivalent label. Do NOT normalize or substitute with a related movement name. "LEGIONARI DI CRISTO" ≠ "Regnum Christi" — never replace one with the other.
 
 FIELD LOCK RULES:
 - Address fields MUST contain only address information.
@@ -361,10 +505,30 @@ FIELD MAPPING & NORMALIZATION:
 - 'Stato civile' -> Marital_Status.
 - Do NOT normalize date formats.
 
-DATE_OF_BIRTH VERBATIM RULE (CRITICAL):
-- Extract Date_Of_Birth EXACTLY as it appears in the document. Do NOT expand, reformat, or complete it.
-- If the document shows "28/09/67", output "28/09/67". Do NOT output "28/09/1967".
-- Expanding a 2-digit year to 4 digits is FORBIDDEN — it is a model-generated addition not present in the PDF.
+DATE_OF_BIRTH FORMAT RULE (CRITICAL):
+- Extract Date_Of_Birth and output it in DD/MM/YYYY format always.
+- If the date is already numeric (e.g., "21/04/1969", "21-04-1969"), convert it to DD/MM/YYYY.
+- If the date contains written month names in ANY language, convert the month to its 2-digit number and output DD/MM/YYYY.
+- Month name → number mapping:
+  January/enero/gennaio/janvier/janeiro = 01
+  February/febrero/febbraio/février/fevereiro = 02
+  March/marzo/mars/março = 03
+  April/abril/aprile/avril = 04
+  May/mayo/maggio/mai/maio = 05
+  June/junio/giugno/juin/junho = 06
+  July/julio/luglio/juillet/julho = 07
+  August/agosto/août = 08
+  September/septiembre/settembre/septembre/setembro = 09
+  October/octubre/ottobre/octobre/outubro = 10
+  November/noviembre/novembre/novembro = 11
+  December/diciembre/dicembre/décembre/dezembro = 12
+- Examples:
+  "21 de abril de 1969" → "21/04/1969"
+  "June 13, 1975" → "13/06/1975"
+  "13 giugno 1975" → "13/06/1975"
+  "21/04/1969" → "21/04/1969"
+- Do NOT expand 2-digit years — "28/09/67" stays "28/09/67".
+- If date is partially unreadable, output only what is clearly visible.
 
 BIRTH_PROVINCE_OR_STATE LABEL MAPPING (CRITICAL — HARD ENFORCE):
 - SCAN every line of the document for these labels: Provincia, Provincia de nacimiento, Departamento, Dpto., Birth Province, Regione di nascita, Municipio de nacimiento, Lugar de nacimiento (province part).
@@ -410,9 +574,48 @@ EMAIL EXTRACTION RULE (CRITICAL — HARD ENFORCE):
 - If no explicit honorific/title is present in the text, set `Salutation` to `null`. Never guess.
 
 ## LANGUAGE RULES
-- `Primary_Language`: Detect the dominant language of the page.
-- `Languages`: Extract ONLY the explicitly marked languages (marked with X, tick, circle, cross, or other selection marks). Never include unmarked languages even if they appear on the page.
-- **Rule:** If the document has no readable text or no languages are marked, set `Primary_Language` to `null` and `Languages` to `[]`. Do not guess.
+- `Primary_Language` must be determined from the language proficiency table when one is present. If no proficiency table exists, follow the NO-TABLE FALLBACK rules below.
+- `Languages`: Extract ONLY languages that have an explicit mark or score value in their cell.
+
+LANGUAGE PROFICIENCY TABLE RULES (CRITICAL — for tables like "Conoscenze delle Lingue"):
+- These tables list language names as column or row headers with proficiency cells below/beside them.
+- A language is ONLY extracted if at least one cell in its column/row contains an explicit non-empty value.
+- Valid cell marks: X, XX, XXX, IX, tick (✓), circle, cross, Ottimo, Discreto, Medio, Elementare, any score or level word.
+- A language name appearing ONLY as a column/row header with ALL empty cells = NOT extracted. Its presence as a label alone is NOT a mark.
+- DO NOT extract a language just because its name appears in the table header — the cell beside/under it MUST have a visible mark or score.
+- Step-by-step for each language in the table:
+  1. Locate the column or row for that language.
+  2. Check ALL cells in that column/row for any visible mark or score value.
+  3. If at least one cell has a mark/score → extract that language into Languages[].
+  4. If all cells are empty → do NOT extract that language. Empty = language not known.
+- PRIMARY_LANGUAGE DETECTION FROM PROFICIENCY TABLE (CRITICAL):
+  * After identifying all marked languages, determine which has the HIGHEST proficiency level.
+  * Proficiency rank (highest to lowest): Ottimo > Discreto > Medio > Elementare. For X-based marks: XXX > XX > X > IX.
+  * The language with the highest total marks across all rows (Leggere + Parlare + Scrivere + Livello) is the native/dominant language → set as Primary_Language.
+  * Example: Portoghese has marks in ALL cells (Leggere+Parlare+Scrivere+Ottimo), Italiana only Discreto → Primary_Language = "Portuguese".
+  * Do NOT default to the document's page language. Italian page ≠ Italian as Primary_Language.
+
+NO-TABLE PRIMARY_LANGUAGE FALLBACK RULES (CRITICAL — when NO proficiency table is present):
+- When there is no language proficiency table, determine Primary_Language using this priority order:
+  PRIORITY 1 — Birth Country mapping (STRONGEST SIGNAL): Use Birth_Country (or Birth_Province_or_State for federal countries) to determine Primary_Language using this table:
+    USA / United States / United States of America → English
+    United Kingdom / UK / England / Scotland / Wales / Ireland → English
+    Australia / New Zealand / Canada / South Africa → English
+    Mexico / España / Spain / Colombia / Argentina / Chile / Peru / Venezuela / Ecuador / Bolivia / Paraguay / Uruguay / Cuba / Dominican Republic / Guatemala / Honduras / El Salvador / Nicaragua / Costa Rica / Panama → Spanish
+    Brazil / Brasil → Portuguese
+    Portugal → Portuguese
+    Italy / Italia → Italian
+    France / Francia → French
+    Germany / Deutschland / Alemania → German
+    Poland / Polska → Polish
+    Philippines / Filipinas → Filipino/English
+    If Birth_Country matches any of the above, set Primary_Language accordingly. Do NOT override this with the form/application language.
+  PRIORITY 2 — Language of official personal documents: If birth cert, baptism cert, high school diploma, or national ID are written in a specific language, use that language. Also add it to Languages[].
+  PRIORITY 3 — Explicitly labeled language field: If a "Lingua madre", "Native language", "Idioma nativo", "First language", or similar label is present with a value, use that value.
+  NEVER USE — Application form language: The language the enrollment/application form is written in is NOT the applicant's native language.
+  NEVER USE — Current residence country: Where the person currently lives does NOT determine their native language.
+  NEVER USE — Language of course/program applied to: The program or course language is NOT the applicant's native language.
+- If no signal from any priority, set Primary_Language=null and Languages=[].
 
 GEOGRAPHY RULES:
 - (Strictly) If a birth city value is actually a country name (USA, India, France, Italy), move it to Birth_Country and set Birth_City=null.
@@ -421,13 +624,35 @@ GEOGRAPHY RULES:
 - `Citizenship_Country` must not be extracted from address or residence fields.
 - State_or_Province must be a location name only, never a ZIP/postal code, street address, phone number, country, or numeric value. If unclear, return null.
 - State_or_Province MUST be extracted VERBATIM as printed in the document. Do NOT replace a full region/province name with an abbreviation or code (e.g., if the document shows "LAZIO", output "LAZIO" — never output "RM" or any abbreviation unless that abbreviation is what is literally printed).
+- ISSUING AUTHORITY EXCLUSION RULE (CRITICAL): Passport and ID documents contain an issuing authority field (labels: Expedido por, Lugar de expedición, Issued by, Autorità emittente, Luogo di rilascio, C.G., CG, Consulado General, Consulado, Embajada, Embassy, Autoridad). Text from these fields — including abbreviations like "C.G.", "CG", or authority names like "Consulado General Guadalajara" — is an issuing authority, NOT a State/Province. NEVER extract issuing authority text into State_or_Province. If State_or_Province cannot be found from an actual address field, set it to null.
+- DOCUMENT NOTATION RULE (CRITICAL): If any field value is "idem", "id.", "ibid", "same", or any shorthand meaning "same as above/previous", DO NOT use that notation as the field value. Look at the previous entry to find the actual value and use that. "idem" is NEVER a valid place name, school name, or field value. If the actual value cannot be determined from context, set the field to null.
 
-Extract address fields ONLY if explicitly labeled as a current, residential, or home address. Otherwise, leave them null.
+ADDRESS + GEOGRAPHY RULES (CRITICAL — HARD ENFORCE):
+- SCAN every line of the document for ANY of these address-related labels: Dirección, Direccion, Domicilio, Domicile, Indirizzo, Indirizzo di Roma, Indirizzo di residenza, Indirizzo attuale, Adresse, Address, Residencia, Mailing Address, Residence, Via, Calle, Rua, Rue, Street, Apt, Apartamento, C.P., ZIP, CAP, Postal Code, Ciudad, City, Città, Ville, Stato, State, Provincia, País, Country, Paese.
+- If ANY address-related label is present with a value, you MUST extract the address components — do NOT leave them null.
+- Leaving ALL address fields null when any address block is visible on the document is a hard extraction failure.
+
+ADDRESS SOURCE PRIORITY RULES (CRITICAL — HARD ENFORCE):
+- When MULTIPLE address blocks appear across document pages, follow this strict priority order:
+  1. HIGHEST PRIORITY: Address on the main enrollment/application form labeled as personal/student/home/current (e.g., "Indirizzo", "Indirizzo di Roma", "Domicilio", "Residencia", "Indirizzo di residenza", "Residenza", "Dirección actual", "Home Address") → ALWAYS the applicant's legal mailing address.
+  2. LOWER PRIORITY: Address in a passport "domicilio" or "domicile" field → often outdated or temporary. NEVER prefer passport address over enrollment form address.
+  3. LOWEST PRIORITY: Address found in letterhead, institution header, office block, certification footer, or sender's block → INSTITUTION's address, NOT the applicant's.
+- PASSPORT DOMICILE EXCLUSION (CRITICAL): If the document packet contains an enrollment/application form with a residential address AND a passport with a domicile address, ALWAYS use the enrollment form address. Passport domicile is an old/snapshot address.
+- PASSPORT ADDRESS ABBREVIATION RULE (CRITICAL): Passport address fields often contain abbreviated city/province codes (e.g., "SA" for Salamanca, "MA" for Madrid, "BA" for Barcelona). These short abbreviations are NEVER valid City or State_or_Province values. If the enrollment form provides the full name, use that instead. If only the passport abbreviation exists and the full name cannot be determined, set the field to null.
+- NEVER extract an institution's letterhead or office address into Mailing fields.
+- If an early page (e.g., page 1) has a personal address field AND later pages have an institutional letterhead address, ALWAYS use the personal address from the earlier page.
+- The presence of a street address in a certification letter header does NOT make it the applicant's mailing address.
+
+HANDWRITTEN FIELD EXTRACTION RULE (CRITICAL):
+- Do NOT skip fields because their values are handwritten.
+- If a printed label (e.g., "Congregazione o diocesi cui appartiene", "Diocese", "Diocesi di appartenenza", "Congregazione") is present and the adjacent value is handwritten, you MUST extract the handwritten text VERBATIM.
+- Only set null if the text is completely unreadable — no single character is distinguishable.
+- Confidence score for handwritten values should be 0.5 or below.
 
 Strictly split the address into these components:
 - `Street_Address`: Extract ONLY the house number, street name, apartment/suite number, and road name (e.g., "1601 Main Street"). Locally strip and REMOVE the city, state, ZIP code, and country from this specific field.
 - `City`: The city name only (e.g., "Wellsburg").
-- `State_or_Province`: The state or province name/abbreviation only (e.g., "WV").
+- `State_or_Province`: The state or province name/abbreviation only (e.g., "WV"). NEVER extract issuing authority text (C.G., CG, Consulado General, Consulado, Embajada, Embassy, Expedido por) into this field — those are passport/ID issuing authority labels, not geographic state/province values. If no actual state/province is found in address fields, set to null.
 - `Zip_or_Postal_Code`: The postal/ZIP code number only.
 - `Country`: The country name only. Never put a country name inside the Street_Address field.
 - Birth_Country and Citizenship_Country must NEVER be auto-copied from each other.
@@ -439,6 +664,17 @@ Strictly split the address into these components:
 - Never populate birth fields from citizenship, nationality, address, residence, school, university, parent information, or document-signing locations.
 - If a birth value is missing, incomplete, OCR-corrupted, or unclear, return null.
 - If a birth city value is actually a country name, move it to Birth_Country and set Birth_City to null.
+- BIRTH COUNTRY vs STATE RULE (CRITICAL): Birth_Country must be a sovereign country name. A US state name (Michigan, California, Texas, New York, Florida, Ohio, etc.) is NEVER a country — it is a state/province. If a US state name appears where Birth_Country should be, move it to Birth_Province_or_State and set Birth_Country = "USA". Same for other federal countries: Australian states → "Australia", German Länder → "Germany", Canadian provinces → "Canada", Mexican states → "Mexico".
+
+PHONE / MOBILE / FAX EXTRACTION RULE (CRITICAL — HARD ENFORCE):
+- SCAN every line of the document for ANY of these labels: Tel, Tel., Telefono, Teléfono, Téléphone, Telefon, Phone, Teléfono fijo, Fijo, Home Phone, Work Phone, Tél., Cellulare, Cel., Celular, Mobile, Móvil, Portable, Handy, Fax, Facsimile.
+- If ANY of these labels are present with a number value, you MUST extract it:
+  * Phone / Tel / Telefono / Fijo / Home Phone → Phone
+  * Mobile / Celular / Cellulare / Cel. / Móvil → Mobile
+  * Fax / Facsimile → Fax
+- If a number appears in the document with no label but is in a contact block alongside address or email, extract it into Phone.
+- Copy the number VERBATIM — do not reformat, add spaces, or change separators.
+- Leaving Phone, Mobile, and Fax all null when any phone number is visible on the document is a hard extraction failure.
 
 STAMP & DECORATIVE TEXT IGNORE RULE:
 - Ignore stamps, seals, logos, watermarks
@@ -448,14 +684,16 @@ Extract education history into unique objects. Never infer or add fields outside
 
 - If `Document_Type` is "Birth Certificate", do not extract `School_Name` or `Degree`; return `Education_History` as [].
 
-- `School_Name`: Must be a distinct academic institution.
+- `School_Name`: Must be a distinct academic institution. Extract the FULL name as it appears — never truncate (e.g., "Ateneo Pontificio Regina Apostolorum" not "Ateneo Regina Apostolorum"). Do NOT translate or reword institution names — if the document says "Ateneo Pontificio Regina Apostolorum", output exactly that, NOT "Pontificia Università Regina Apostolorum" or any other variant not present in the document.
 - `Degree`: The exact degree name awarded
+- PRIMARY SUBJECT ONLY: During consolidation, if Education_History entries from different pages include records clearly issued to a person whose name differs from the primary applicant (First_Name/Last_Name), remove those entries. Only keep records belonging to the primary applicant.
 
 Strict Target Corrections:
 1. **Invalid Degree Text (Set Degree to null):** If the degree string matches variants of coursework tracking or generic years like "CICLO MAGISTERIO ANNO 3°", extract the `School_Name` but set `Degree = null`.
 2. **Generic Placeholders (Remove Entire Object):** If a school row contains only a status label like "ORDINARIA" or "ORDINARIO" as the degree, do NOT extract it at all. Set both `School_Name = null` and `Degree = null`.
 3. **No Faculties as Schools:** If a name contains "FACOLTA'", "FACULTY", or "DEPARTMENT", it is an academic division, not a school. Set both `School_Name = null` and `Degree = null`.
 4. **Home Schooling:** Always normalize any home schooling variant to exactly `"School_Name": "HOME SCHOOLED"`.
+5. **Document Notation "idem":** If a School_Name or Degree value is "idem", "id.", "ibid", or any shorthand for "same as above", resolve it to the actual value from the previous row. If unresolvable, set to null. "idem" is NEVER a valid school name or place name.
 
 ## EDUCATION LEVEL BLOCK
 - **`Education_Level` MUST ALWAYS be null.** Never populate this field under any condition in this prompt.
@@ -463,9 +701,27 @@ Strict Target Corrections:
 ## RELIGIOUS & DIOCESE RULES
 - **Religious label-only rule:** Fill `Diocese`, `Bishop_Email`, `Bishop_Name`, `Seminary_Name`, `Seminary_Address`, and `Seminary_Email` ONLY when the document contains a label that clearly matches that key (same wording or close synonym, e.g., "Bishop Email", "Email del Vescovo", "Seminary Address", "Indirizzo del seminario"); otherwise set that key to `null`.
 - `Diocese`: Extract the diocese name only if it includes a real geographical city/place (e.g., "Diocese of Rome"). Never assign a religious movement name here.
-- **Religious_Order:** Extract the exact religious organization or movement name as explicitly written in the text; do not normalize, shorten, or modify the name in any way.
+- **Religious_Order:** Extract the exact religious organization or movement name as explicitly written in the text — do not normalize, shorten, translate, or substitute with a related name. "LEGIONARI DI CRISTO" and "Regnum Christi" are distinct organizations; never replace one with the other. Output verbatim only what the label says.
 - **Single-selection rule:** If multiple options are present, select only one option indicated by a marker (tick, circle ○, cross ✗, or any explicit selection mark).
 - Only the option with a directly attached selection mark may be selected. Ignore all unmarked options even if they appear more relevant. Never infer selection from context or surrounding text.
+
+RELIGIOUS_STATUS EXTRACTION RULE (CRITICAL — HARD ENFORCE):
+- SCAN every labeled checkbox/option list for religious status values such as: Seminarista, Seminarista diocesano, Sacerdote diocesano, Religioso, Religioso professo, Diacono, Laico, Consagrado/a, Consacrato/a, Studente religioso, Novizio, Oblato, Terziario.
+- If ANY checkbox/option has an explicit selection mark (X, ✓, circle, cross) next to it, extract EXACTLY that labeled text into Religious_Status.
+- Do NOT skip Religious_Status because it is in a small checkbox or the mark is handwritten — ANY visible mark counts.
+- Leaving Religious_Status null when a visibly marked checkbox exists is a hard extraction failure.
+
+HANDWRITTEN FIELD EXTRACTION RULE (CRITICAL):
+- Do NOT skip fields because their values are handwritten.
+- If a printed label (e.g., "Congregazione o diocesi cui appartiene", "Diocese", "Diocesi di appartenenza", "Congregazione") is present and the adjacent value is handwritten, you MUST extract the handwritten text VERBATIM.
+- Only set null if the text is completely unreadable — no single character is distinguishable.
+- Confidence score for handwritten values should be 0.5 or below.
+
+ORDINATION_DATE EXTRACTION RULE (CRITICAL — HARD ENFORCE):
+- SCAN every line of the document for ANY of these labels: Data di ordinazione, Data ordinazione sacerdotale, Ordained, Ordination Date, Date of Ordination, Fecha de ordenación, Fecha ordenación, Ordinato il, Ordinato sacerdote il, Diaconal Ordination, Priestly Ordination, Presbyteral Ordination, Data di ordinazione diaconale, Data di ordinazione presbiterale, Sacerdote dal, Priest since, Date d'ordination.
+- If ANY of these labels are present with a date value, you MUST extract that date into Ordination_Date VERBATIM.
+- Do NOT normalize or reformat the date — copy exactly as printed.
+- Leaving Ordination_Date null when such a label with a date is visible on the document is a hard extraction failure.
 
 DIOCESE OCR CORRECTION RULES (CRITICAL — HARD ENFORCE):
 - Before outputting Diocese, check: does the extracted text contain "MONSON"?
@@ -614,8 +870,19 @@ CONSOLIDATION_SYSTEM_PROMPT = f"""
     - Never output unmarked languages, even if they appear in the document
     - Never output empty or null Languages if any marked language exists in input
 
-    - `Primary_Language`: Look at the "Primary_Language" field of each individual page. Count them. Set the final `Primary_Language` to the one that appears most frequently.
-    - If there is a frequency tie, default to "English".
+    - `Primary_Language` selection — use this priority order:
+      1. If any page has Primary_Language derived from a language PROFICIENCY TABLE, use that value (highest priority).
+      2. If Birth_Country is available, map it to a language using this table and use that as Primary_Language:
+         USA/United States/United Kingdom/Australia/New Zealand/Canada/Ireland → English
+         Mexico/Spain/Colombia/Argentina/Chile/Peru/Venezuela/Ecuador/Bolivia/Paraguay/Uruguay/Cuba/Guatemala/Honduras/El Salvador/Nicaragua/Costa Rica/Panama/Dominican Republic → Spanish
+         Brazil/Brasil/Portugal → Portuguese
+         Italy/Italia → Italian
+         France → French
+         Germany/Deutschland → German
+      3. If no proficiency table and no Birth_Country match, use Primary_Language from official personal document pages (birth cert, baptism cert, high school diploma).
+      4. If still unclear, count frequency of Primary_Language values across pages; pick most frequent.
+      5. On tie, default to "English".
+    - NEVER let the application form language win over Birth_Country or official personal documents. A Spanish form does NOT mean Spanish is the primary language if Birth_Country is USA.
 
     - Never drop Languages for simplification
 
@@ -709,7 +976,19 @@ FINAL_CONSOLIDATION_SYSTEM_PROMPT = f"""
     1. Languages (array) — union of all unique marked languages across batches
     2. Primary_Language (single value)
 
-    - `Primary_Language`: Choose the most frequently occurring `Primary_Language` across the batches. On tie, default to "English".
+    - `Primary_Language` selection — use this priority order:
+      1. If any batch has Primary_Language derived from a language PROFICIENCY TABLE, use that value (highest priority).
+      2. If Birth_Country is available, map it to a language using this table:
+         USA/United States/United Kingdom/Australia/New Zealand/Canada/Ireland → English
+         Mexico/Spain/Colombia/Argentina/Chile/Peru/Venezuela/Ecuador/Bolivia/Paraguay/Uruguay/Cuba/Guatemala/Honduras/El Salvador/Nicaragua/Costa Rica/Panama/Dominican Republic → Spanish
+         Brazil/Brasil/Portugal → Portuguese
+         Italy/Italia → Italian
+         France → French
+         Germany/Deutschland → German
+      3. If no proficiency table and no Birth_Country match, use Primary_Language from official personal document pages.
+      4. If still unclear, pick the most frequently occurring Primary_Language value across batches.
+      5. On tie, default to "English".
+    - NEVER let the application form language override Birth_Country. A Spanish enrollment form does NOT mean Spanish is primary if Birth_Country is USA.
 
     ## FINAL RULE
     - Output **strict JSON only**
