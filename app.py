@@ -238,6 +238,7 @@ def _call_page_extraction_vlm(
     response = requests.post(VLM_URL, json=payload, headers=headers, timeout=300,
                              proxies={"http": None, "https": None})
     result = response.json()
+    # print("VLM result:", result)
     return parse_model_json(result.get("response", ""))
 
 
@@ -315,7 +316,7 @@ def _call_consolidation_llm(prompt_text: str, system_prompt: str, access_token: 
     }
     response = requests.post(LLM_URL, json=payload, headers=headers, timeout=600, proxies={"http": None, "https": None})
     result = response.json()
-    # print(f"{result = }")
+    print(f"{result = }")
     return parse_model_json(result.get("response", ""))
 
 
